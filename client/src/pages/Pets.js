@@ -1,39 +1,109 @@
-import React, {useState} from 'react'
-import gql from 'graphql-tag'
-import { useQuery, useMutation } from '@apollo/react-hooks'
-import PetsList from '../components/PetsList'
-import NewPetModal from '../components/NewPetModal'
-import Loader from '../components/Loader'
+import React, { useState } from 'react';
+import gql from 'graphql-tag';
+import { useQuery, useMutation } from '@apollo/react-hooks';
+import PetsList from '../components/PetsList';
+import NewPetModal from '../components/NewPetModal';
+import Loader from '../components/Loader';
 
+const PETS_FIELDS = gql`
+	fragment PetsFields on Pet {
+		id
+		name
+		type
+		img
+		vaccinated @client
+		owner {
+			id
+			age @client
+		}
+	}
+`;
 
-export default function Pets () {
-  const [modal, setModal] = useState(false)
+const ALL_PETS = gql`
+	query AllPets {
+		pets {
+			...PetsFields
+		}
+	}
 
+	${PETS_FIELDS}
+`;
 
-  const onSubmit = input => {
-    setModal(false)
-  }
-  
-  if (modal) {
-    return <NewPetModal onSubmit={onSubmit} onCancel={() => setModal(false)} />
-  }
+const NEW_PET = gql`
+	mutation CreateAPet($newPet: NewPetInput!) {
+		addPet(input: $newPet) {
+			...PetsFields
+		}
+	}
+	${PETS_FIELDS}
+`;
 
-  return (
-    <div className="page pets-page">
-      <section>
-        <div className="row betwee-xs middle-xs">
-          <div className="col-xs-10">
-            <h1>Pets</h1>
-          </div>
+export default function Pets() {
+	const [modal, setModal] = useState(false);
+	// loading its happening async in the background
+	// then data gets set which cause a re render of the component
+	const { data, loading, error } = useQuery(ALL_PETS);
+	// 1st arg mutation function, useMutation doesn't execute or make a network call
+	// when u instantiate it. It makes the call when call the function provided from the hook
+	//  then we get the object newPet
+	const [createPet, newPet] = useMutation(NEW_PET, {
+		// 1st argument in update is a reference to the cache object, and the graphql response (data)
+		// then you have to read any querie that might be intrested in this new
+		// resource you created
+		update(cache, { data: { addPet } }) {
+			const data = cache.readQuery({ query: ALL_PETS });
+			cache.writeQuery({
+				query: ALL_PETS,
+				data: { pets: [addPet, ...data.pets] },
+			});
+		},
+	});
 
-          <div className="col-xs-2">
-            <button onClick={() => setModal(true)}>new pet</button>
-          </div>
-        </div>
-      </section>
-      <section>
-        <PetsList />
-      </section>
-    </div>
-  )
+	const onSubmit = (input) => {
+		setModal(false);
+		createPet({
+			variables: { newPet: input },
+			optimisticResponse: {
+				__typename: 'Mutation',
+				addPet: {
+					__typename: 'Pet',
+					id: Math.floor(Math.random() * 1000) + '',
+					name: input.name,
+					type: input.type,
+					img: 'https://via.placeholder.com/300',
+				},
+			},
+		});
+	};
+
+	if (loading) {
+		return <Loader />;
+	}
+
+	if (error || newPet.error) {
+		return <p>error</p>;
+	}
+
+	console.log(data.pets[0]);
+
+	if (modal) {
+		return <NewPetModal onSubmit={onSubmit} onCancel={() => setModal(false)} />;
+	}
+
+	return (
+		<div className='page pets-page'>
+			<section>
+				<div className='row betwee-xs middle-xs'>
+					<div className='col-xs-10'>
+						<h1>Pets</h1>
+					</div>
+
+					<div className='col-xs-2'>
+						<button onClick={() => setModal(true)}>new pet</button>
+					</div>
+				</div>
+			</section>
+			<section>{<PetsList pets={data.pets} />}</section>
+		</div>
+	);
 }
